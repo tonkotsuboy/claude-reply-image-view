@@ -38,6 +38,11 @@ export function absoluteImagePaths(text: string): string[] {
   return [...new Set(paths.filter(path => path.startsWith('/')))]
 }
 
+/** Whether a tool exists to show the user something, so its row gets tiles. */
+export function showsImages(tool: string): boolean {
+  return tool === 'SendUserFile' || tool === 'SendUserMessage' || /screenshot/i.test(tool)
+}
+
 type Block = { type?: unknown; text?: unknown; data?: unknown; mimeType?: unknown }
 
 /** An MCP result's content blocks, whether the row holds the block list or the whole result. */
@@ -53,6 +58,9 @@ function contentBlocks(output: unknown): Block[] {
  * saved, or the picture they returned).
  */
 export function toolImages(tool: string, input: unknown, output: unknown): { refs: string[]; pngs: string[] } {
+  if (!showsImages(tool)) {
+    return { refs: [], pngs: [] }
+  }
   const fields = (input ?? {}) as Record<string, unknown>
   if (tool === 'SendUserFile') {
     // The result holds each file resolved to an absolute path; before it, the input's own paths.

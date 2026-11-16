@@ -2,7 +2,7 @@ import type { EngineInterface, Register, RenderElement, RenderInput } from 'clau
 
 import { blockCells, drawsPictures, fitRow, pngSize } from './layout'
 import type { Size } from './layout'
-import { absoluteImagePaths, candidates, imageRefs, isVideo, toolImages } from './paths'
+import { absoluteImagePaths, candidates, imageRefs, isVideo, showsImages, toolImages } from './paths'
 import { decodeThumb } from './png'
 import type { Thumb } from './png'
 
@@ -36,6 +36,11 @@ const SEEN_MAX = 500
 const SCAN_MAX = 200_000
 // The Image element takes inline PNG bytes up to 2 MiB.
 const INLINE_MAX = 2 * 1024 * 1024
+
+// A finished call's standalone result row (ToolResult) carries no input, so the input of each
+// call to a showing tool is kept by its id. Limit: module memory, like `seen`.
+const inputs = new Map<string, unknown>()
+const INPUTS_MAX = 200
 
 function remember(text: string) {
   for (const path of absoluteImagePaths(text)) {
@@ -165,7 +170,7 @@ function fit(label: string, columns: number): string {
 /** `body` with a row of `list`'s tiles under it, indented past the row's bullet. */
 async function withTiles(
   $: EngineInterface,
-  e: RenderInput<'AssistantMessage' | 'ToolUse', 'terminal'>,
+  e: RenderInput<'AssistantMessage' | 'ToolUse' | 'ToolResult' | 'ToolGroup', 'terminal'>,
   body: RenderElement,
   list: readonly Shown[],
 ): Promise<RenderElement> {
@@ -207,6 +212,12 @@ export const register: Register = on => {
     const result = await next(e)
     // Remembering paths is a side job: a failure here must never fail the tool call.
     try {
+      if (showsImages(e.tool)) {
+        inputs.set(e.tool_use_id, e)
+        if (inputs.size > INPUTS_MAX) {
+          inputs.delete(inputs.keys().next().value!)
+        }
+      }
       const input = JSON.stringify(e)
       if (input.length <= SCAN_MAX) {
         remember(input)
@@ -231,17 +242,46 @@ export const register: Register = on => {
   })
 
   // Tools whose job is to show the user something (SendUserFile, SendUserMessage, screenshots)
-  // get the same tiles under their row once they finish.
-  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
-    if (e.surface !== 'terminal' || e.props.isRunning || e.props.isErrored) {
+  // get the same tiles once they finish. Where depends on how the call is drawn: a standalone
+  // call's use row only draws while it runs and its result goes to its own ToolResult row, so
+  // the tiles go under that; a row of an unfolded group carries its output itself.
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+    if (e.surface !== 'terminal' || e.props.isErrored) {
       return next(e)
     }
-    const { refs, pngs } = toolImages(e.props.tool, e.props.input, e.props.output)
-    if (refs.length === 0 && pngs.length === 0) {
-      return next(e)
-    }
-    const files = await resolveAll($, refs)
-    const shots = await Promise.all(pngs.map((png, i) => inline($, `${e.props.tool_use_id}#${i}`, png, `screenshot ${i + 1}`)))
-    return withTiles($, e, await next(e), [...files, ...shots.filter(shot => shot !== null)])
+    const id = e.props.tool_use_id
+    const list = await toolTiles($, [{ id, ...e.props, input: inputs.get(id), isRunning: false }])
+    return list.length === 0 ? next(e) : withTiles($, e, await next(e), list)
   })
+
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    if (e.surface !== 'terminal' || e.props.output === undefined) {
+      return next(e)
+    }
+    const list = await toolTiles($, [{ id: e.props.tool_use_id, ...e.props }])
+    return list.length === 0 ? next(e) : withTiles($, e, await next(e), list)
+  })
+
+  // A run of calls folded into one count line draws no ToolUse rows, so its tiles go under that
+  // line; unfolded (ctrl+o), each row draws its own.
+  on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => {
+    if (e.surface !== 'terminal' || e.props.isExpanded) {
+      return next(e)
+    }
+    const list = await toolTiles($, e.props.calls.map((call, i) => ({ id: call.tool_use_id ?? `${e.requestId}#${i}`, ...call })))
+    return list.length === 0 ? next(e) : withTiles($, e, await next(e), list)
+  })
+}
+
+type Call = { id: string; tool: string; input: unknown; output?: unknown; isRunning: boolean; isErrored: boolean }
+
+/** The tiles for the finished calls among `calls` that show the user an image. */
+async function toolTiles($: EngineInterface, calls: readonly Call[]): Promise<Shown[]> {
+  const done = calls.filter(call => !call.isRunning && !call.isErrored)
+  const found = done.map(call => ({ call, ...toolImages(call.tool, call.input, call.output) }))
+  const files = await resolveAll($, found.flatMap(({ refs }) => refs))
+  const shots = await Promise.all(
+    found.flatMap(({ call, pngs }) => pngs.map((png, i) => inline($, `${call.id}#${i}`, png, `screenshot ${i + 1}`))),
+  )
+  return [...files, ...shots.filter(shot => shot !== null)]
 }
