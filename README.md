@@ -95,7 +95,29 @@ On Linux, PNG thumbnails work; other image types and videos without `ffmpeg` sho
 
 ## Security
 
-Local only, no network requests. It reads the image files a reply names, runs `sips` or `ffmpeg` on them to write one PNG each into Claude Code's temp folder, runs `id -u` once to find that folder, and reads a few environment variables (`HOME`, `TERM`, `TERM_PROGRAM`, `TMUX` and similar) to pick a renderer. Run `claude plugin validate` on the repo to see every event it hooks and every call it makes.
+Everything stays on your machine. The mod makes no network requests and sends nothing to the model.
+
+### Programs it runs
+
+Each is a fixed command in `hooks/register.tsx`, run through Claude Code's `$.process.run`:
+
+| Command | When | Why |
+|---|---|---|
+| `id -u` | Once per session, before the first conversion | To find Claude Code's temp folder, `/tmp/claude-<uid>` |
+| `sips -s format png -Z 1600 <image> --out <temp png>` | Once per non-PNG image (macOS) | The terminal draws PNG only, so JPEG, HEIC, WebP and the rest are converted |
+| `ffmpeg -nostdin -v error -y -i <video> -frames:v 1 -vf scale=… <temp png>` | Once per video | To draw a video's first frame as its thumbnail |
+
+PNG files need none of these.
+
+### What it sends, and where
+
+- **To the terminal**: the thumbnails, drawn by Claude Code's `Image` element (the terminal reads the PNG file from disk) or as colored half blocks, and each file name as a `file://` link (OSC 8). The link opens the file in your default app only when you cmd+click it.
+- **To disk**: one PNG per converted image or video, written by `sips` or `ffmpeg` into Claude Code's temp folder (`/tmp/claude-<uid>/reply-image-view-<hash>.png`).
+- **Nowhere else**: no network, no model context, no files outside that temp folder.
+
+### What it reads
+
+The image and video files a reply or tool row names; the input and output of tool calls, to remember image paths (in memory only, never written out); and a few environment variables (`HOME`, `TERM`, `TERM_PROGRAM`, `TMUX` and similar) to pick a renderer. Run `claude plugin validate` on the repo to see every event it hooks and every call it makes.
 
 ## Development
 

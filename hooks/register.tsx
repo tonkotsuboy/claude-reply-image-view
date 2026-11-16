@@ -89,10 +89,11 @@ async function convertedPng($: EngineInterface, source: string): Promise<string 
   if (await $.fs.exists(out)) {
     return out
   }
-  const command = isVideo(source)
-    ? ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', source, '-frames:v', '1', '-vf', "scale='min(1600,iw)':-2", out]
-    : ['sips', '-s', 'format', 'png', '-Z', '1600', source, '--out', out]
-  const { exitCode } = await $.process.run(command).catch(() => ({ exitCode: 1 }))
+  // Each command is written out in full, so the directory's review (and the README) can list it.
+  const run = isVideo(source)
+    ? $.process.run(['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', source, '-frames:v', '1', '-vf', "scale='min(1600,iw)':-2", out])
+    : $.process.run(['sips', '-s', 'format', 'png', '-Z', '1600', source, '--out', out])
+  const { exitCode } = await run.catch(() => ({ exitCode: 1 }))
   return exitCode === 0 ? out : undefined
 }
 
