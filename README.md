@@ -1,10 +1,18 @@
 # Claude Reply Image View
 
-A Claude Code mod that shows the images and videos Claude talks about. When a reply names an image or video file, a row of thumbnails appears right under that reply, so you see the screenshot Claude just took instead of a bare path.
+A Claude Code mod that shows the images and videos Claude mentions, right under its reply.
 
-It is the other half of [claude-image-view](https://github.com/jarrodwatts/claude-image-view), which previews the images *you* paste.
+## The problem
+
+Claude Code often finishes a task by pointing at a file: a screenshot from a browser test, a chart it rendered, a screen recording. In the terminal you only get the path. To check the result you copy it, switch to Finder or Preview, and open it, once for every file the reply names.
+
+## The fix
+
+This mod reads each reply, finds the image and video paths in it, and draws thumbnails below the text. Videos show their first frame. Cmd+click a file name to open the full file in its default app.
 
 ![Claude Reply Image View in action: two photos and a video's first frame under a reply](claude-reply-image-view.png)
+
+It pairs with [claude-image-view](https://github.com/jarrodwatts/claude-image-view), which previews the images *you* paste into the prompt.
 
 ## Install
 
