@@ -48,6 +48,18 @@ Image types: PNG, JPEG, GIF, WebP, HEIC, BMP, TIFF. Videos (MP4, MOV, M4V, WebM)
 
 "A tool call touched" means the path appeared in the input or output of any tool call in the session (a `Read`, a `Write`, a `Bash` command, a screenshot tool), which is how a reply that only says `out.png` finds the right file.
 
+### Under tool rows
+
+Some tools exist to show you something, but Claude Code's terminal only prints a one-line row for them. The same thumbnails appear under those rows once the call finishes:
+
+| Tool | What it shows |
+|---|---|
+| `SendUserFile` | The images and videos it sent |
+| `SendUserMessage` | Image paths in the message, found as in a reply |
+| Any tool with `screenshot` in its name (e.g. chrome-devtools `take_screenshot`, Playwright `browser_take_screenshot`) | The file it saved, or the PNG it returned inline |
+
+Other tools that merely touch images (`Read`, `Bash`) get nothing.
+
 ## Opening a file
 
 The name under each thumbnail is a `file://` link. Cmd+click it (Ctrl+click on Linux, depending on the terminal) and the terminal opens the file in its default app: a video in your player, an image in your viewer. This works in terminals that support OSC 8 hyperlinks, such as Ghostty, iTerm2, WezTerm and kitty. In Claude Code's fullscreen mode a plain click goes to Claude Code, so hold Ctrl or Alt.
@@ -57,7 +69,7 @@ Links point at your local disk, so they don't open files that only exist on a re
 ## How it works
 
 1. A `tool.call` hook remembers the absolute image and video paths seen in tool inputs and outputs (in memory, at most 500).
-2. A `ui.render` hook on each assistant reply finds image references in the text, resolves them as above, and draws them under the reply.
+2. A `ui.render` hook on each assistant reply finds image references in the text, resolves them as above, and draws them under the reply. A second one on tool rows does the same for the tools listed above.
 3. PNGs are drawn straight from the file. Other image types are converted once with macOS `sips`, and videos to their first frame with `ffmpeg`, into Claude Code's temp folder (`/tmp/claude-<uid>/reply-image-view-<hash>.png`).
 4. In Ghostty and kitty the thumbnail is a real picture. Elsewhere it is drawn in colored half blocks.
 

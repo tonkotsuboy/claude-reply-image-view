@@ -1,17 +1,27 @@
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderElement, RenderInput } from 'claude-code'
 
 import { blockCells, drawsPictures, fitRow, pngSize } from './layout'
 import type { Size } from './layout'
-import { absoluteImagePaths, candidates, imageRefs, isVideo } from './paths'
+import { absoluteImagePaths, candidates, imageRefs, isVideo, toolImages } from './paths'
 import { decodeThumb } from './png'
 import type { Thumb } from './png'
 
-/** A file a reply names, ready to draw: its PNG, size, and a block thumbnail where pictures can't be drawn. */
-type Shown = { source: string; png: string; size: Size | null; thumb: Thumb | null }
+/**
+ * One tile, ready to draw: a PNG file or inline PNG bytes, its size, a block thumbnail where the
+ * terminal can't draw pictures, and the file it opens on cmd+click.
+ */
+type Shown = {
+  key: string
+  label: string
+  picture: { file: string } | { png: string }
+  size: Size | null
+  thumb: Thumb | null
+  href?: string
+}
 
-// Files that exist, keyed by path: drawn (Shown) or not drawable (null, e.g. no converter), so
-// neither is converted or read again. A path whose file doesn't exist yet isn't cached: the reply
-// may name it before the file is written.
+// Files that exist, keyed by path, and inline pictures, keyed by tool call: drawn (Shown) or not
+// drawable (null, e.g. no converter), so neither is converted or decoded again. A path whose file
+// doesn't exist yet isn't cached: the reply may name it before the file is written.
 const looked = new Map<string, Shown | null>()
 let pictures: boolean | undefined
 let tmpRoot: string | undefined
@@ -24,6 +34,8 @@ const seen = new Set<string>()
 const SEEN_MAX = 500
 // Past this a tool's output (a whole file read) isn't scanned.
 const SCAN_MAX = 200_000
+// The Image element takes inline PNG bytes up to 2 MiB.
+const INLINE_MAX = 2 * 1024 * 1024
 
 function remember(text: string) {
   for (const path of absoluteImagePaths(text)) {
@@ -79,22 +91,27 @@ async function convertedPng($: EngineInterface, source: string): Promise<string 
   return exitCode === 0 ? out : undefined
 }
 
+async function thumbFor($: EngineInterface, base64: string): Promise<Thumb | null> {
+  return (await canDrawPictures($)) ? null : decodeThumb(Uint8Array.fromBase64(base64))
+}
+
 async function describe($: EngineInterface, source: string): Promise<Shown | null> {
   const png = /\.png$/i.test(source) ? source : await convertedPng($, source)
   if (png === undefined) {
     return null
   }
+  const base = source.split('/').pop() ?? source
+  const tile = { key: source, label: isVideo(source) ? `▶ ${base}` : base, picture: { file: png }, href: `file://${source}` }
   // Over $.fs.read's 4 MiB cap the picture still draws, only without its aspect ratio.
   const base64 = await $.fs.read(png, { as: 'bytes' }).then(bytes => bytes.base64, () => undefined)
   if (base64 === undefined) {
-    return { source, png, size: null, thumb: null }
+    return { ...tile, size: null, thumb: null }
   }
   const size = pngSize(base64)
   if (size === null) {
     return null // named .png but not a PNG
   }
-  const thumb = (await canDrawPictures($)) ? null : decodeThumb(Uint8Array.fromBase64(base64))
-  return { source, png, size, thumb }
+  return { ...tile, size, thumb: await thumbFor($, base64) }
 }
 
 /** The file at `source` ready to draw; undefined when there is no file, null when it can't be drawn. */
@@ -121,8 +138,68 @@ async function resolve($: EngineInterface, ref: string, where: Parameters<typeof
   return undefined
 }
 
+/** The tiles for `refs`, each resolved on its own (in parallel, order kept), duplicates dropped. */
+async function resolveAll($: EngineInterface, refs: readonly string[]): Promise<Shown[]> {
+  if (refs.length === 0) {
+    return []
+  }
+  home ??= await $.env.get('HOME')
+  const where = { home, cwd: await $.session.cwd(), seen: [...seen] }
+  const resolved = await Promise.all(refs.map(ref => resolve($, ref, where)))
+  return [...new Map(resolved.flatMap(shown => (shown ? [[shown.key, shown] as const] : []))).values()]
+}
+
+/** A PNG a tool returned inline (a screenshot), as a tile; null when it isn't a PNG or is too big. */
+async function inline($: EngineInterface, key: string, base64: string, label: string): Promise<Shown | null> {
+  if (!looked.has(key)) {
+    const size = base64.length * 0.75 <= INLINE_MAX ? pngSize(base64) : null
+    looked.set(key, size && { key, label, picture: { png: base64 }, size, thumb: await thumbFor($, base64) })
+  }
+  return looked.get(key) ?? null
+}
+
 function fit(label: string, columns: number): string {
   return label.length > columns ? `${label.slice(0, Math.max(1, columns - 1))}…` : label
+}
+
+/** `body` with a row of `list`'s tiles under it, indented past the row's bullet. */
+async function withTiles(
+  $: EngineInterface,
+  e: RenderInput<'AssistantMessage' | 'ToolUse', 'terminal'>,
+  body: RenderElement,
+  list: readonly Shown[],
+): Promise<RenderElement> {
+  // fitRow caps the height itself; the width is what's left of the viewport after the indent.
+  const cells = fitRow(list.map(image => image.size), Infinity, (e.viewport?.columns ?? 80) - 2)
+  if (cells.length === 0) {
+    return body
+  }
+  const { Box, Image, Link, Raster, Text } = $.ui.resolve(e)
+  return (
+    <Box flexDirection="column">
+      {body}
+      <Box flexDirection="row" columnGap={1} paddingLeft={2}>
+        {cells.map(({ columns, rows }, i) => {
+          const image = list[i]!
+          const label = fit(image.label, columns)
+          return (
+            <Box key={image.key} flexDirection="column" alignItems="center" borderStyle="round" borderDimColor>
+              {image.thumb ? (
+                <Raster key={`blocks-${i}`} columns={columns} rows={rows} cells={blockCells(image.thumb, columns, rows)} />
+              ) : (
+                <Image source={{ ...image.picture, format: 'png' }} columns={columns} rows={rows} alt={image.label} />
+              )}
+              {/* The name links to the file, so cmd+click opens it in its default app (a video in
+                  the player). A Button would not do: clicks reach a mod only in the fullscreen
+                  terminal, not on the main screen. */}
+              <Text dimColor>{image.href ? <Link href={image.href} label={label} /> : label}</Text>
+            </Box>
+          )
+        })}
+        {list.length > cells.length && <Text dimColor>+{list.length - cells.length}</Text>}
+      </Box>
+    </Box>
+  )
 }
 
 export const register: Register = on => {
@@ -149,46 +226,22 @@ export const register: Register = on => {
     if (refs.length === 0) {
       return next(e)
     }
-    home ??= await $.env.get('HOME')
-    const where = { home, cwd: await $.session.cwd(), seen: [...seen] }
-    // Each reference resolves on its own, so they look up in parallel; the order is kept.
-    const resolved = await Promise.all(refs.map(ref => resolve($, ref, where)))
-    const list = [...new Map(resolved.flatMap(shown => (shown ? [[shown.source, shown] as const] : []))).values()]
-    // The reply's bullet indent (2) is left of the tiles; fitRow caps the height itself.
-    const cells = fitRow(list.map(image => image.size), Infinity, (e.viewport?.columns ?? 80) - 2)
-    const body = await next(e)
-    if (cells.length === 0) {
-      return body
-    }
+    const list = await resolveAll($, refs)
+    return withTiles($, e, await next(e), list)
+  })
 
-    const { Box, Image, Link, Raster, Text } = $.ui.resolve(e)
-    return (
-      <Box flexDirection="column">
-        {body}
-        <Box flexDirection="row" columnGap={1} paddingLeft={2}>
-          {cells.map(({ columns, rows }, i) => {
-            const image = list[i]!
-            const base = image.source.split('/').pop() ?? image.source
-            const name = isVideo(image.source) ? `▶ ${base}` : base
-            return (
-              <Box key={image.source} flexDirection="column" alignItems="center" borderStyle="round" borderDimColor>
-                {image.thumb ? (
-                  <Raster key={`blocks-${i}`} columns={columns} rows={rows} cells={blockCells(image.thumb, columns, rows)} />
-                ) : (
-                  <Image source={{ file: image.png, format: 'png' }} columns={columns} rows={rows} alt={name} />
-                )}
-                {/* The name links to the file, so cmd+click opens it in its default app (a video in
-                    the player). A Button would not do: clicks reach a mod only in the fullscreen
-                    terminal, not on the main screen. */}
-                <Text dimColor>
-                  <Link href={`file://${image.source}`} label={fit(name, columns)} />
-                </Text>
-              </Box>
-            )
-          })}
-          {list.length > cells.length && <Text dimColor>+{list.length - cells.length}</Text>}
-        </Box>
-      </Box>
-    )
+  // Tools whose job is to show the user something (SendUserFile, SendUserMessage, screenshots)
+  // get the same tiles under their row once they finish.
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    if (e.surface !== 'terminal' || e.props.isRunning || e.props.isErrored) {
+      return next(e)
+    }
+    const { refs, pngs } = toolImages(e.props.tool, e.props.input, e.props.output)
+    if (refs.length === 0 && pngs.length === 0) {
+      return next(e)
+    }
+    const files = await resolveAll($, refs)
+    const shots = await Promise.all(pngs.map((png, i) => inline($, `${e.props.tool_use_id}#${i}`, png, `screenshot ${i + 1}`)))
+    return withTiles($, e, await next(e), [...files, ...shots.filter(shot => shot !== null)])
   })
 }

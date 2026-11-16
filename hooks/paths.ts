@@ -2,6 +2,9 @@ const VIDEO = 'mp4|mov|m4v|webm'
 // A file extension the mod draws, dot included.
 const EXT = `\\.(?:png|jpe?g|gif|webp|heic|bmp|tiff?|${VIDEO})`
 const VIDEO_PATH = new RegExp(`\\.(?:${VIDEO})$`, 'i')
+const MEDIA_PATH = new RegExp(`${EXT}$`, 'i')
+// The most tiles drawn under one reply or tool row.
+const LIMIT = 6
 
 /** Whether a path names a video, shown by its first frame. */
 export function isVideo(path: string): boolean {
@@ -24,7 +27,7 @@ const REFERENCE = new RegExp(`${QUOTED}|${ABSOLUTE}|${RELATIVE}`, 'gi')
 const TOOL_PATH = new RegExp(`${QUOTED_ABSOLUTE}|${ABSOLUTE}`, 'gi')
 
 /** The distinct image references a reply makes, as written, in the order they appear; at most `limit`. */
-export function imageRefs(text: string, limit = 6): string[] {
+export function imageRefs(text: string, limit = LIMIT): string[] {
   const refs = [...text.matchAll(REFERENCE)].map(([whole, quoted]) => (quoted ?? whole).trim())
   return [...new Set(refs)].slice(0, limit)
 }
@@ -33,6 +36,43 @@ export function imageRefs(text: string, limit = 6): string[] {
 export function absoluteImagePaths(text: string): string[] {
   const paths = [...text.matchAll(TOOL_PATH)].map(([whole, quoted]) => quoted ?? whole)
   return [...new Set(paths.filter(path => path.startsWith('/')))]
+}
+
+type Block = { type?: unknown; text?: unknown; data?: unknown; mimeType?: unknown }
+
+/** An MCP result's content blocks, whether the row holds the block list or the whole result. */
+function contentBlocks(output: unknown): Block[] {
+  const list = Array.isArray(output) ? output : (output as { content?: unknown } | undefined)?.content
+  return Array.isArray(list) ? list.filter((block): block is Block => typeof block === 'object' && block !== null) : []
+}
+
+/**
+ * What a tool row shows the user: image references to resolve, and PNGs (base64) its result holds.
+ * Only tools whose job is to show something do: SendUserFile (the files it sends),
+ * SendUserMessage (paths in the message, read like a reply) and screenshot tools (the file they
+ * saved, or the picture they returned).
+ */
+export function toolImages(tool: string, input: unknown, output: unknown): { refs: string[]; pngs: string[] } {
+  const fields = (input ?? {}) as Record<string, unknown>
+  if (tool === 'SendUserFile') {
+    // The result holds each file resolved to an absolute path; before it, the input's own paths.
+    const sent = (output as { attachments?: { path?: unknown }[] } | undefined)?.attachments?.map(file => file.path)
+    const files = sent ?? (Array.isArray(fields.files) ? fields.files : [])
+    const refs = files.filter((file): file is string => typeof file === 'string' && MEDIA_PATH.test(file))
+    return { refs: [...new Set(refs)].slice(0, LIMIT), pngs: [] }
+  }
+  if (tool === 'SendUserMessage') {
+    return { refs: typeof fields.message === 'string' ? imageRefs(fields.message) : [], pngs: [] }
+  }
+  if (/screenshot/i.test(tool)) {
+    const blocks = contentBlocks(output)
+    const text = typeof output === 'string' ? output : blocks.map(block => (typeof block.text === 'string' ? block.text : '')).join('\n')
+    const pngs = blocks.flatMap(block =>
+      block.type === 'image' && block.mimeType === 'image/png' && typeof block.data === 'string' ? [block.data] : [],
+    )
+    return { refs: absoluteImagePaths(`${JSON.stringify(input)}\n${text}`).slice(0, LIMIT), pngs: pngs.slice(0, LIMIT) }
+  }
+  return { refs: [], pngs: [] }
 }
 
 /**

@@ -1,6 +1,41 @@
 import { expect, test } from 'claude-code/testing'
 
-import { absoluteImagePaths, candidates, imageRefs, isVideo } from './paths'
+import { absoluteImagePaths, candidates, imageRefs, isVideo, toolImages } from './paths'
+
+test('picks the images a showing tool shows, and nothing from other tools', () => {
+  // SendUserFile: the resolved attachment paths once it ran, the input's paths before; media only.
+  expect(
+    toolImages('SendUserFile', { files: ['a.png', 'notes.md'] }, { attachments: [{ path: '/w/a.png' }, { path: '/w/notes.md' }] }),
+  ).toEqual({ refs: ['/w/a.png'], pngs: [] })
+  expect(toolImages('SendUserFile', { files: ['shots/a.png', 'b.mov'] }, undefined)).toEqual({
+    refs: ['shots/a.png', 'b.mov'],
+    pngs: [],
+  })
+  // SendUserMessage reads like a reply.
+  expect(toolImages('SendUserMessage', { message: 'Saved `out.png` and /tmp/b.jpg.' }, undefined)).toEqual({
+    refs: ['out.png', '/tmp/b.jpg'],
+    pngs: [],
+  })
+  // A screenshot tool: the file it saved, and a PNG it returned inline (a JPEG one is skipped).
+  expect(
+    toolImages(
+      'mcp__chrome-devtools__take_screenshot',
+      { filePath: '/tmp/shot.png' },
+      [
+        { type: 'text', text: 'Saved screenshot to /tmp/shot.png.' },
+        { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' },
+        { type: 'image', mimeType: 'image/jpeg', data: '/9j/4AAQ' },
+      ],
+    ),
+  ).toEqual({ refs: ['/tmp/shot.png'], pngs: ['iVBORw0KGgo='] })
+  expect(toolImages('mcp__playwright__browser_take_screenshot', {}, { content: [{ type: 'image', mimeType: 'image/png', data: 'AAAA' }] })).toEqual({
+    refs: [],
+    pngs: ['AAAA'],
+  })
+  // Bash and Read touch images too, but don't show them to the user.
+  expect(toolImages('Bash', { command: 'ls /tmp/a.png' }, { stdout: '/tmp/a.png' })).toEqual({ refs: [], pngs: [] })
+  expect(toolImages('Read', { file_path: '/tmp/a.png' }, undefined)).toEqual({ refs: [], pngs: [] })
+})
 
 test('finds absolute, ~, relative, bare and quoted references; skips URLs and other files', () => {
   const text = [

@@ -48,6 +48,18 @@ claude plugin install reply-image-view --marketplace tonkotsuboy/claude-reply-im
 
 「ツール呼び出しに出てきた」とは、セッション中のツール呼び出し（`Read`、`Write`、`Bash` のコマンド、スクリーンショットのツールなど）の入力か出力にそのパスが含まれていた、という意味です。返信に `out.png` としか書かれていなくても、これで正しいファイルにたどり着けます。
 
+### ツールの行の下
+
+ユーザーに何かを見せるためのツールでも、Claude Code の端末には 1 行しか出ません。次のツールは、呼び出しが終わるとその行の下に同じサムネイルを並べます。
+
+| ツール | 表示するもの |
+|---|---|
+| `SendUserFile` | 送った画像と動画 |
+| `SendUserMessage` | メッセージ中の画像のパス（返信と同じ見つけ方） |
+| 名前に `screenshot` を含むツール（chrome-devtools の `take_screenshot`、Playwright の `browser_take_screenshot` など） | 保存したファイル、または結果に直接入っている PNG |
+
+画像に触れるだけのツール（`Read`、`Bash`）には何も出しません。
+
 ## ファイルを開く
 
 サムネイルの下のファイル名は `file://` のリンクです。⌘+クリック（Linux では端末によって Ctrl+クリック）すると、端末がそのファイルを既定のアプリで開きます。動画なら動画プレイヤー、画像なら画像ビューアです。Ghostty、iTerm2、WezTerm、kitty など、OSC 8 のハイパーリンクに対応した端末で使えます。Claude Code の全画面モードでは普通のクリックが Claude Code 側に渡るので、Ctrl か Alt を押しながらクリックしてください。
@@ -57,7 +69,7 @@ claude plugin install reply-image-view --marketplace tonkotsuboy/claude-reply-im
 ## 仕組み
 
 1. `tool.call` のフックが、ツールの入力と出力に出てきた画像・動画の絶対パスを覚えます（メモリ上に最大 500 件）。
-2. 返信ごとの `ui.render` のフックが、本文から画像の参照を探し、上の表のとおりに解決して、返信の下に描きます。
+2. 返信ごとの `ui.render` のフックが、本文から画像の参照を探し、上の表のとおりに解決して、返信の下に描きます。ツールの行にももう 1 つフックがあり、上に挙げたツールについて同じことをします。
 3. PNG はファイルをそのまま描きます。それ以外の画像は macOS の `sips` で、動画は `ffmpeg` で最初のコマを、Claude Code の一時フォルダ（`/tmp/claude-<uid>/reply-image-view-<hash>.png`）に一度だけ PNG へ変換します。
 4. Ghostty と kitty では本物の画像で描きます。それ以外の端末では、色付きの半角ブロックで描きます。
 
