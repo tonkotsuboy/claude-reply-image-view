@@ -1,5 +1,7 @@
 # Claude Reply Image View
 
+English | [日本語](README.ja.md)
+
 A Claude Code mod that shows the images and videos Claude mentions, right under its reply.
 
 ## The problem
