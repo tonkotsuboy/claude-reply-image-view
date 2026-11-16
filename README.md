@@ -4,15 +4,7 @@ A Claude Code mod that shows the images and videos Claude talks about. When a re
 
 It is the other half of [claude-image-view](https://github.com/jarrodwatts/claude-image-view), which previews the images *you* paste.
 
-```
-● Saved the screenshot to /tmp/shots/after.png and the recording to ~/rec/demo.mp4.
-  ╭──────────────────────╮ ╭──────────────────────╮
-  │                      │ │                      │
-  │     (screenshot)     │ │    (first frame)     │
-  │                      │ │                      │
-  │ after.png            │ │ ▶ demo.mp4           │
-  ╰──────────────────────╯ ╰──────────────────────╯
-```
+![Claude Reply Image View in action: two photos and a video's first frame under a reply](claude-reply-image-view.png)
 
 ## Install
 
