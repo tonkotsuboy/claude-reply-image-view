@@ -1,0 +1,13 @@
+{
+  "name": "reply-image-view",
+  "version": "0.1.0",
+  "description": "See the images and videos Claude mentions: thumbnails under each reply for the file paths it names",
+  "author": {
+    "name": "tonkotsuboy",
+    "url": "https://github.com/tonkotsuboy"
+  },
+  "homepage": "https://github.com/tonkotsuboy/claude-reply-image-view",
+  "repository": "https://github.com/tonkotsuboy/claude-reply-image-view",
+  "license": "MIT",
+  "keywords": ["images", "video", "preview", "thumbnails", "mod", "terminal", "claude-code"]
+}

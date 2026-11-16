@@ -1,0 +1,5 @@
+{
+  "name": "claude-reply-image-view",
+  "owner": { "name": "tonkotsuboy" },
+  "plugins": [{ "name": "reply-image-view", "source": "./" }]
+}
